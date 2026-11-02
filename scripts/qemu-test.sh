@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 
 cargo build --quiet
 
-BIOS_IMG=$(find target -name "bios.img" | head -1)
+BIOS_IMG=$(find target -name "bios.img" -exec ls -t {} + | head -1)
 if [ -z "$BIOS_IMG" ]; then
     echo "no bios.img found after build" >&2
     exit 1
