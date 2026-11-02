@@ -56,9 +56,24 @@ lazy_static! {
         }
         idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
 
+        // Syscall entry point (int 0x80). Also a raw asm trampoline rather
+        // than an `extern "x86-interrupt" fn` -- process.rs needs direct
+        // access to rax/rdi/rsi (the syscall number and arguments), which
+        // that ABI doesn't expose. DPL=3 is what actually lets ring-3 code
+        // execute `int 0x80` at all: every other vector here defaults to
+        // DPL=0, so a user-mode `int` into any of them would take a #GP
+        // instead of reaching the handler.
+        unsafe {
+            idt[SYSCALL_VECTOR]
+                .set_handler_addr(crate::process::syscall_entry_addr())
+                .set_privilege_level(x86_64::PrivilegeLevel::Ring3);
+        }
+
         idt
     };
 }
+
+pub const SYSCALL_VECTOR: u8 = 0x80;
 
 pub fn init_idt() {
     IDT.load();
@@ -83,6 +98,32 @@ pub fn init() {
         pics.write_masks(masks[0] & !0b11, masks[1]);
     }
     x86_64::instructions::interrupts::enable();
+}
+
+/// Masks IRQ0 (the PIT timer) so no preemption can happen until
+/// `unmask_timer` is called. Used by process.rs while a different address
+/// space is active in CR3: the scheduler's timer-driven switches don't
+/// know about per-process page tables, so a tick landing mid-run would
+/// switch to another task without restoring CR3 first.
+pub fn mask_timer() {
+    // Without this, a keyboard IRQ landing between `PICS.lock()` and
+    // `.unlock()` would run its own handler's `PICS.lock()` for EOI on the
+    // same (non-reentrant) spinlock -- and since the interrupted code is
+    // what would eventually release it, that's a permanent deadlock, not
+    // just a delay.
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let mut pics = PICS.lock();
+        let masks = unsafe { pics.read_masks() };
+        unsafe { pics.write_masks(masks[0] | 0b1, masks[1]) };
+    });
+}
+
+pub fn unmask_timer() {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let mut pics = PICS.lock();
+        let masks = unsafe { pics.read_masks() };
+        unsafe { pics.write_masks(masks[0] & !0b1, masks[1]) };
+    });
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {

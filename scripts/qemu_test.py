@@ -122,6 +122,8 @@ def main():
             "lsdisk",
             "catdisk readme.txt",
             "catdisk data.txt",
+            "run",
+            "run",
             "exit",
         ]
         for cmd in commands:
@@ -136,7 +138,7 @@ def main():
             time.sleep(0.2)
 
         try:
-            status = proc.wait(timeout=10)
+            status = proc.wait(timeout=20)
         except subprocess.TimeoutExpired:
             proc.kill()
             print("=== TEST FAILED: QEMU never exited after 'exit' command ===")
@@ -159,6 +161,18 @@ def main():
             (
                 "End of data.txt." in serial_output,
                 "catdisk data.txt should read all the way through a multi-cluster file",
+            ),
+            (
+                serial_output.count("process: entering ring 3") == 2,
+                "run should enter ring 3 both times it's invoked",
+            ),
+            (
+                serial_output.count("Hello from ring 3!") == 2,
+                "the ring-3 process's write syscall should print both times",
+            ),
+            (
+                serial_output.count("process: back in the kernel, exit code 42") == 2,
+                "both ring-3 runs should return to the kernel with the right exit code",
             ),
             ("shell: exit command received" in serial_output, "exit command should be logged"),
         ]

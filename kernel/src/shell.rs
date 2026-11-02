@@ -71,9 +71,15 @@ fn execute(line: &str) {
         None => {}
         Some("help") => {
             outln!(
-                "commands: help, ls, cat <file>, lsdisk, catdisk <file>, echo <text...>, uptime, clear, exit"
+                "commands: help, ls, cat <file>, lsdisk, catdisk <file>, run, echo <text...>, uptime, clear, exit"
             );
             outln!("('ls'/'cat' read files compiled into the kernel; 'lsdisk'/'catdisk' read a real FAT16 disk via the ATA driver)");
+            outln!("('run' loads a demo program into its own address space and runs it in ring 3)");
+        }
+        Some("run") => {
+            outln!("running demo user-mode process...");
+            let exit_code = crate::process::run_demo();
+            outln!("process exited with code {exit_code}");
         }
         Some("ls") => {
             for name in fs::list() {

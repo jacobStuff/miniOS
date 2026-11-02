@@ -22,9 +22,11 @@ pub mod fs;
 pub mod gdt;
 pub mod interrupts;
 pub mod memory;
+pub mod process;
 pub mod qemu;
 pub mod shell;
 pub mod task;
+pub mod userland;
 
 use qemu::{exit_qemu, QemuExitCode};
 

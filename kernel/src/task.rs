@@ -23,7 +23,14 @@ use core::sync::atomic::Ordering;
 use spin::Mutex;
 use x86_64::VirtAddr;
 
-const STACK_SIZE: usize = 16 * 1024;
+// 64 KiB, not the more typical-for-a-toy-OS 16 KiB: page-table setup (see
+// process.rs) turned out to use several KiB of stack through x86_64 crate
+// generics, and overflowing silently corrupts whatever heap allocation
+// happens to sit right after this one -- which, for a while, was another
+// task's own stack, so that task would GPF the next time it got resumed,
+// nowhere near the code that actually caused it. Generous headroom here is
+// cheap (it's just heap memory) and avoids re-debugging that.
+const STACK_SIZE: usize = 64 * 1024;
 
 /// Mirrors exactly what the CPU pushes on interrupt entry in 64-bit long
 /// mode (always all 5 words, regardless of whether the privilege level
