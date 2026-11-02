@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 use bootloader_api::config::{BootloaderConfig, Mapping};
 use bootloader_api::{entry_point, BootInfo};
 use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 #[macro_use]
 pub mod framebuffer;
@@ -19,6 +20,7 @@ pub mod gdt;
 pub mod interrupts;
 pub mod memory;
 pub mod qemu;
+pub mod task;
 
 use qemu::{exit_qemu, QemuExitCode};
 
@@ -49,16 +51,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     println!("miniOS booting...");
     println!("Hello, World!");
 
-    interrupts::init();
-    serial_println!("GDT/IDT/PIC initialized, interrupts enabled");
-
-    // Deliberately trigger a breakpoint exception to prove the IDT handler
-    // runs and execution resumes afterwards, instead of faulting.
-    x86_64::instructions::interrupts::int3();
-    serial_println!("resumed after int3 -- breakpoint handler worked");
-
-    println!("Interrupts online.");
-
+    // Heap must be up before interrupts are enabled: once the timer starts
+    // firing, every tick runs the scheduler, and even its first no-op
+    // `VecDeque::push_back` needs to grow the queue's backing allocation.
     let physical_memory_offset = boot_info
         .physical_memory_offset
         .into_option()
@@ -85,12 +80,40 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("Heap allocator online.");
 
-    // Wait for a handful of timer ticks to prove the PIC remap + timer
-    // handler are actually alive, then report success.
-    while interrupts::tick_count() < 5 {
+    // The IDT's timer entry points at task::task_timer_entry, which calls
+    // into the scheduler on every tick -- so the scheduler must exist
+    // before interrupts::init() enables interrupts, or the first tick
+    // panics on an uninitialized SCHEDULER.
+    task::init();
+    interrupts::init();
+    serial_println!("GDT/IDT/PIC initialized, interrupts enabled");
+
+    // Deliberately trigger a breakpoint exception to prove the IDT handler
+    // runs and execution resumes afterwards, instead of faulting.
+    x86_64::instructions::interrupts::int3();
+    serial_println!("resumed after int3 -- breakpoint handler worked");
+
+    println!("Interrupts online.");
+
+    task::spawn(demo_task_a);
+    task::spawn(demo_task_b);
+    task::spawn(demo_task_c);
+    serial_println!("spawned 3 demo tasks, waiting for them to interleave...");
+
+    // Each demo task bumps STEPS once per loop iteration; once enough steps
+    // have happened across all three, we've proven real preemptive
+    // round-robin scheduling (not just one task hogging the CPU) and can
+    // report success. kernel_main's own thread is itself just another
+    // context in the same round-robin from here on.
+    while STEPS.load(Ordering::Relaxed) < 15 {
         x86_64::instructions::hlt();
     }
-    serial_println!("observed {} timer ticks", interrupts::tick_count());
+    serial_println!(
+        "multitasking demo complete after {} steps, {} timer ticks",
+        STEPS.load(Ordering::Relaxed),
+        interrupts::tick_count()
+    );
+    println!("Multitasking online.");
 
     #[cfg(feature = "halt_for_screenshot")]
     loop {
@@ -99,6 +122,29 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     #[cfg(not(feature = "halt_for_screenshot"))]
     exit_qemu(QemuExitCode::Success);
 }
+
+/// Total loop iterations across all demo tasks; kernel_main polls this to
+/// know when it's seen enough interleaved progress to call the
+/// multitasking demo verified.
+static STEPS: AtomicU64 = AtomicU64::new(0);
+
+macro_rules! demo_task {
+    ($name:ident, $label:literal) => {
+        extern "C" fn $name() -> ! {
+            let mut n: u64 = 0;
+            loop {
+                n += 1;
+                serial_println!("[{}] step {}", $label, n);
+                STEPS.fetch_add(1, Ordering::Relaxed);
+                x86_64::instructions::hlt();
+            }
+        }
+    };
+}
+
+demo_task!(demo_task_a, "task-a");
+demo_task!(demo_task_b, "task-b");
+demo_task!(demo_task_c, "task-c");
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {

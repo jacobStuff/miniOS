@@ -48,6 +48,12 @@ lazy_static! {
     };
 }
 
+/// The kernel code segment selector, needed to build the fake interrupt
+/// frames that task.rs uses to bootstrap a new task's first context switch.
+pub fn kernel_code_selector() -> SegmentSelector {
+    GDT.1.code_selector
+}
+
 pub fn init() {
     use x86_64::instructions::segmentation::{Segment, CS, SS};
     use x86_64::instructions::tables::load_tss;

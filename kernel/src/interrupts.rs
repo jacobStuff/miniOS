@@ -9,7 +9,7 @@ use pic8259::ChainedPics;
 use spin::Mutex;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
-static TICKS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static TICKS: AtomicU64 = AtomicU64::new(0);
 
 pub fn tick_count() -> u64 {
     TICKS.load(Ordering::Relaxed)
@@ -48,7 +48,12 @@ lazy_static! {
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
 
-        idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
+        // The timer vector doesn't get a normal `extern "x86-interrupt"`
+        // handler: task::task_timer_entry is a hand-written asm trampoline
+        // that drives preemptive task switching. See task.rs for why.
+        unsafe {
+            idt[InterruptIndex::Timer.as_u8()].set_handler_addr(crate::task::timer_entry_addr());
+        }
         idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
 
         idt
@@ -115,14 +120,6 @@ extern "x86-interrupt" fn general_protection_fault_handler(
         stack_frame
     );
     exit_qemu(QemuExitCode::Failed);
-}
-
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    TICKS.fetch_add(1, Ordering::Relaxed);
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
-    }
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
