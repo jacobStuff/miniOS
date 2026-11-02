@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 
 use bootloader_api::{entry_point, BootInfo};
 use core::panic::PanicInfo;
@@ -8,6 +9,8 @@ use core::panic::PanicInfo;
 pub mod framebuffer;
 #[macro_use]
 pub mod serial;
+pub mod gdt;
+pub mod interrupts;
 pub mod qemu;
 
 use qemu::{exit_qemu, QemuExitCode};
@@ -15,25 +18,13 @@ use qemu::{exit_qemu, QemuExitCode};
 entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    // No IDT exists yet, so keep interrupts masked until the next milestone
-    // sets one up (otherwise the PIT timer fires straight into an empty
-    // IDT and we start taking faults for no reason).
+    // Interrupts stay off until init() below has a GDT/TSS (for the
+    // double-fault IST stack), an IDT, and a remapped PIC all in place.
     x86_64::instructions::interrupts::disable();
 
     serial_println!("miniOS booting (serial)...");
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
-        let info = fb.info();
-        serial_println!(
-            "fb ptr={:p} len={} w={} h={} stride={} bpp={} fmt={:?}",
-            fb.buffer_mut().as_ptr(),
-            fb.buffer_mut().len(),
-            info.width,
-            info.height,
-            info.stride,
-            info.bytes_per_pixel,
-            info.pixel_format
-        );
         framebuffer::init(fb);
     }
 
@@ -41,6 +32,23 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("miniOS booting...");
     println!("Hello, World!");
+
+    interrupts::init();
+    serial_println!("GDT/IDT/PIC initialized, interrupts enabled");
+
+    // Deliberately trigger a breakpoint exception to prove the IDT handler
+    // runs and execution resumes afterwards, instead of faulting.
+    x86_64::instructions::interrupts::int3();
+    serial_println!("resumed after int3 -- breakpoint handler worked");
+
+    println!("Interrupts online.");
+
+    // Wait for a handful of timer ticks to prove the PIC remap + timer
+    // handler are actually alive, then report success.
+    while interrupts::tick_count() < 5 {
+        x86_64::instructions::hlt();
+    }
+    serial_println!("observed {} timer ticks", interrupts::tick_count());
 
     #[cfg(feature = "halt_for_screenshot")]
     loop {
