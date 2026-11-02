@@ -64,10 +64,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         .expect("bootloader did not map physical memory (check BOOTLOADER_CONFIG)");
     let physical_memory_offset = x86_64::VirtAddr::new(physical_memory_offset);
 
-    let mut mapper = unsafe { memory::init(physical_memory_offset) };
-    let mut frame_allocator = unsafe { memory::BootInfoFrameAllocator::init(&boot_info.memory_regions) };
+    let mut mapper = unsafe { memory::init(physical_memory_offset, &boot_info.memory_regions) };
 
-    allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
+    allocator::init_heap(&mut mapper, &mut memory::GlobalFrameAllocator)
+        .expect("heap initialization failed");
     serial_println!("heap mapped at {:#x}, {} bytes", allocator::HEAP_START, allocator::HEAP_SIZE);
 
     // Exercise the allocator: a Box (single heap allocation) and a Vec that
