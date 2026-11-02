@@ -78,6 +78,17 @@ impl FrameBufferWriter {
         match c {
             '\n' => self.newline(),
             '\r' => self.carriage_return(),
+            '\u{8}' => {
+                // Backspace: step back one cell and blank it, for the shell's
+                // line editing. Does nothing at the start of a line -- we
+                // don't track previous lines, so there's nowhere to go back
+                // to.
+                if self.x_pos > BORDER_PADDING {
+                    self.x_pos -= font_constants::CHAR_RASTER_WIDTH + LETTER_SPACING;
+                    self.write_rendered_char(get_char_raster(' '));
+                    self.x_pos -= font_constants::CHAR_RASTER_WIDTH + LETTER_SPACING;
+                }
+            }
             c => {
                 let new_xpos = self.x_pos + font_constants::CHAR_RASTER_WIDTH;
                 if new_xpos >= self.width() {
@@ -139,6 +150,14 @@ pub fn init(framebuffer: &'static mut FrameBuffer) {
     let info = framebuffer.info();
     let buffer = framebuffer.buffer_mut();
     *WRITER.lock() = Some(FrameBufferWriter::new(buffer, info));
+}
+
+pub fn clear() {
+    interrupts::without_interrupts(|| {
+        if let Some(writer) = WRITER.lock().as_mut() {
+            writer.clear();
+        }
+    });
 }
 
 #[macro_export]

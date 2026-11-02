@@ -16,10 +16,12 @@ pub mod framebuffer;
 #[macro_use]
 pub mod serial;
 pub mod allocator;
+pub mod fs;
 pub mod gdt;
 pub mod interrupts;
 pub mod memory;
 pub mod qemu;
+pub mod shell;
 pub mod task;
 
 use qemu::{exit_qemu, QemuExitCode};
@@ -115,12 +117,15 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     );
     println!("Multitasking online.");
 
-    #[cfg(feature = "halt_for_screenshot")]
+    task::spawn(shell::run);
+    serial_println!("shell task spawned, handing off to it");
+
+    // The shell task handles everything from here, including calling
+    // exit_qemu() on an "exit" command. kernel_main's own thread still
+    // takes its turn in the round-robin, but has nothing left to do.
     loop {
         x86_64::instructions::hlt();
     }
-    #[cfg(not(feature = "halt_for_screenshot"))]
-    exit_qemu(QemuExitCode::Success);
 }
 
 /// Total loop iterations across all demo tasks; kernel_main polls this to
@@ -134,8 +139,12 @@ macro_rules! demo_task {
             let mut n: u64 = 0;
             loop {
                 n += 1;
-                serial_println!("[{}] step {}", $label, n);
-                STEPS.fetch_add(1, Ordering::Relaxed);
+                if n <= 5 {
+                    serial_println!("[{}] step {}", $label, n);
+                    STEPS.fetch_add(1, Ordering::Relaxed);
+                }
+                // Done proving interleaving; quiesce rather than spam the
+                // log forever once the shell takes over.
                 x86_64::instructions::hlt();
             }
         }
