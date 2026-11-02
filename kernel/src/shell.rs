@@ -70,7 +70,10 @@ fn execute(line: &str) {
     match parts.next() {
         None => {}
         Some("help") => {
-            outln!("commands: help, ls, cat <file>, echo <text...>, uptime, clear, exit");
+            outln!(
+                "commands: help, ls, cat <file>, lsdisk, catdisk <file>, echo <text...>, uptime, clear, exit"
+            );
+            outln!("('ls'/'cat' read files compiled into the kernel; 'lsdisk'/'catdisk' read a real FAT16 disk via the ATA driver)");
         }
         Some("ls") => {
             for name in fs::list() {
@@ -86,6 +89,24 @@ fn execute(line: &str) {
                 None => outln!("cat: {name}: no such file"),
             },
             None => outln!("usage: cat <file>"),
+        },
+        Some("lsdisk") => {
+            for entry in crate::fat16::list() {
+                outln!("{} ({} bytes)", entry.name, entry.size);
+            }
+        }
+        Some("catdisk") => match parts.next() {
+            Some(name) => match crate::fat16::read(name) {
+                Some(contents) => match core::str::from_utf8(&contents) {
+                    Ok(text) => {
+                        print!("{text}");
+                        serial_println!("{text}");
+                    }
+                    Err(_) => outln!("catdisk: {name}: not valid UTF-8 ({} bytes)", contents.len()),
+                },
+                None => outln!("catdisk: {name}: no such file"),
+            },
+            None => outln!("usage: catdisk <file>"),
         },
         Some("echo") => {
             let rest: Vec<&str> = parts.collect();

@@ -3,11 +3,18 @@ use std::process::{exit, Command};
 
 fn main() {
     let bios_path = env!("BIOS_PATH");
+    let disk_path = env!("DISK_PATH");
 
     let show_display = env::args().any(|arg| arg == "--display");
 
     let mut cmd = Command::new("qemu-system-x86_64");
     cmd.arg("-drive").arg(format!("format=raw,file={bios_path}"));
+    // The FAT16 data disk goes on the secondary IDE bus (ports 0x170-0x177),
+    // kept deliberately separate from the boot drive on the primary bus
+    // (0x1F0-0x1F7) that kernel/src/ata.rs targets.
+    cmd.arg("-drive")
+        .arg(format!("id=disk1,if=none,format=raw,file={disk_path}"));
+    cmd.arg("-device").arg("ide-hd,drive=disk1,bus=ide.1,unit=0");
     cmd.arg("-serial").arg("mon:stdio");
     cmd.arg("-device")
         .arg("isa-debug-exit,iobase=0xf4,iosize=0x04");

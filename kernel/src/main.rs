@@ -16,6 +16,8 @@ pub mod framebuffer;
 #[macro_use]
 pub mod serial;
 pub mod allocator;
+pub mod ata;
+pub mod fat16;
 pub mod fs;
 pub mod gdt;
 pub mod interrupts;

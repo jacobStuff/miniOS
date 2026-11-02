@@ -29,12 +29,12 @@ def keys_for(text):
         yield KEY_NAMES.get(ch, ch)
 
 
-def find_bios_image():
+def find_newest(filename):
     newest = None
     newest_mtime = -1
     for dirpath, _dirs, files in os.walk(os.path.join(ROOT, "target")):
-        if "bios.img" in files:
-            path = os.path.join(dirpath, "bios.img")
+        if filename in files:
+            path = os.path.join(dirpath, filename)
             mtime = os.path.getmtime(path)
             if mtime > newest_mtime:
                 newest_mtime = mtime
@@ -77,9 +77,13 @@ def wait_for_serial(path, marker, timeout=15):
 def main():
     subprocess.run(["cargo", "build", "--quiet"], cwd=ROOT, check=True)
 
-    bios_img = find_bios_image()
+    bios_img = find_newest("bios.img")
+    disk_img = find_newest("disk.img")
     if not bios_img:
         print("no bios.img found after build", file=sys.stderr)
+        return 1
+    if not disk_img:
+        print("no disk.img found after build", file=sys.stderr)
         return 1
 
     serial_log = "/tmp/minios_test_serial.log"
@@ -92,6 +96,8 @@ def main():
         [
             "qemu-system-x86_64",
             "-drive", f"format=raw,file={bios_img}",
+            "-drive", f"id=disk1,if=none,format=raw,file={disk_img}",
+            "-device", "ide-hd,drive=disk1,bus=ide.1,unit=0",
             "-serial", f"file:{serial_log}",
             "-qmp", f"unix:{qmp_sock},server,nowait",
             "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
@@ -109,7 +115,15 @@ def main():
         f.readline()  # greeting
         qmp_cmd(f, {"execute": "qmp_capabilities"})
 
-        commands = ["ls", "cat readme.txt", "echo hi there", "exit"]
+        commands = [
+            "ls",
+            "cat readme.txt",
+            "echo hi there",
+            "lsdisk",
+            "catdisk readme.txt",
+            "catdisk data.txt",
+            "exit",
+        ]
         for cmd in commands:
             for key in keys_for(cmd + "\n"):
                 reply = qmp_cmd(f, {
@@ -136,6 +150,16 @@ def main():
             ("readme.txt" in serial_output, "ls should list readme.txt"),
             ("Welcome to miniOS" in serial_output, "cat readme.txt should print its contents"),
             ("hi there" in serial_output, "echo hi there should echo its args"),
+            ("README.TXT" in serial_output, "lsdisk should list README.TXT from the FAT16 disk"),
+            ("DATA.TXT" in serial_output, "lsdisk should list DATA.TXT from the FAT16 disk"),
+            (
+                "own ATA PIO driver and FAT16 parser" in serial_output,
+                "catdisk readme.txt should print the real file contents read via ATA/FAT16",
+            ),
+            (
+                "End of data.txt." in serial_output,
+                "catdisk data.txt should read all the way through a multi-cluster file",
+            ),
             ("shell: exit command received" in serial_output, "exit command should be logged"),
         ]
         ok = all(c for c, _ in checks)
